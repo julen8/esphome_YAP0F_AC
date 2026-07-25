@@ -6,6 +6,8 @@ namespace remote_base {
 
 static const char *const TAG = "remote.kelvinator";
 
+// Kelvinator/YAP0F 协议以 85us 为基础时间单位。这里保留“单位数 × 85us”的
+// 写法，便于与协议资料和示波器/逻辑分析仪捕获结果直接对照。
 static const int32_t TICK_US = 85;
 static const int32_t HEADER_MARK_US = 106 * TICK_US;
 static const int32_t HEADER_SPACE_US = 53 * TICK_US;
@@ -16,6 +18,8 @@ static const int32_t GAP_SPACE_US = 235 * TICK_US;
 static const int32_t DOUBLE_GAP_SPACE_US = 2 * GAP_SPACE_US;
 
 void KelvinatorProtocol::encode_data_(RemoteTransmitData *dst, const uint32_t data) {
+  // 协议按低位优先发送：先发送低地址字节，每个字节再从 bit 0 发到 bit 7。
+  // 逻辑 0/1 使用相同 mark，通过后续 space 长度区分。
   const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&data);
   for (unsigned byte_index = 0; byte_index < 4; byte_index++) {
     for (uint8_t bit = 0; bit < 8; bit++) {
@@ -26,6 +30,8 @@ void KelvinatorProtocol::encode_data_(RemoteTransmitData *dst, const uint32_t da
 }
 
 void KelvinatorProtocol::encode_footer_(RemoteTransmitData *dst) {
+  // 每个 8 字节块在前 4 字节后插入固定的 010 footer，随后用约 20ms 的 gap
+  // 分隔后 4 字节。footer 不完整时接收器可能能解码，但实体空调会拒绝命令。
   dst->item(BIT_MARK_US, BIT_ZERO_SPACE_US);
   dst->item(BIT_MARK_US, BIT_ONE_SPACE_US);
   dst->item(BIT_MARK_US, BIT_ZERO_SPACE_US);
@@ -33,6 +39,8 @@ void KelvinatorProtocol::encode_footer_(RemoteTransmitData *dst) {
 }
 
 void KelvinatorProtocol::encode(RemoteTransmitData *dst, const KelvinatorData &data) {
+  // 每个 8 字节块都拥有独立 header、footer、结尾 mark 和约 40ms 块间隔。
+  // 不能只给整条消息追加一次结尾，否则第二块及睡眠 3 的第三块不会被空调接受。
   dst->set_carrier_frequency(38000);
   dst->reserve(276 * data.data.size());
   for (size_t block_index = 0; block_index < data.data.size(); block_index++) {
@@ -51,6 +59,8 @@ bool KelvinatorProtocol::decode_footer_(RemoteReceiveData &src) {
 }
 
 bool KelvinatorProtocol::decode_data_(RemoteReceiveData &src, uint32_t *data) {
+  // 解码顺序必须与 encode_data_ 完全对称。任意 mark/space 超出 remote_receiver
+  // 配置的容差都会立即返回 false，避免把噪声发布成空调状态。
   uint8_t *bytes = reinterpret_cast<uint8_t *>(data);
   for (unsigned byte_index = 0; byte_index < 4; byte_index++) {
     uint8_t value = 0;
@@ -74,6 +84,8 @@ bool KelvinatorProtocol::decode_data_(RemoteReceiveData &src, uint64_t *data) {
 }
 
 optional<KelvinatorData> KelvinatorProtocol::decode(RemoteReceiveData data) {
+  // ESP32-C3 通常一次回调只包含一个 8 字节块，因此底层只解码并校验当前块；
+  // 两个常规块的配对由 KelvinatorIR::on_receive() 在 climate 层完成。
   KelvinatorData result;
   uint64_t block;
   if (!this->decode_data_(data, &block))
@@ -87,6 +99,9 @@ optional<KelvinatorData> KelvinatorProtocol::decode(RemoteReceiveData data) {
 }
 
 uint8_t KelvinatorData::calculate_block_checksum(const uint64_t block) {
+  // 每个 8 字节块单独计算 4 bit 校验和并存入 Byte 7 高半字节：
+  // 初值为 10，加 Byte 0~3 的低半字节，再加 Byte 4~6 的高半字节，最后模 16。
+  // 第 7 字节低半字节属于实际协议数据，写校验和时必须保留。
   const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&block);
   uint8_t sum = 10;
   for (uint8_t index = 0; index < 4; index++)
@@ -97,6 +112,7 @@ uint8_t KelvinatorData::calculate_block_checksum(const uint64_t block) {
 }
 
 void KelvinatorData::apply_checksum() {
+  // 睡眠 3 的第三块也走同一套校验规则，因此遍历 data 中的所有块。
   for (auto &block : this->data) {
     uint8_t *bytes = reinterpret_cast<uint8_t *>(&block);
     bytes[7] = (bytes[7] & 0x0F) | (this->calculate_block_checksum(block) << 4);
@@ -104,6 +120,7 @@ void KelvinatorData::apply_checksum() {
 }
 
 bool KelvinatorData::is_valid_checksum() {
+  // 只要任意一块校验失败，就丢弃当前回调，避免污染上层的分块缓存。
   for (auto block : this->data) {
     const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&block);
     if ((bytes[7] >> 4) != this->calculate_block_checksum(block))

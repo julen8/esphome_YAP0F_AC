@@ -14,9 +14,15 @@ KelvinatorDisplaySwitch = kelvinator_ir_ns.class_(
 KelvinatorAuxiliaryHeatSelect = kelvinator_ir_ns.class_(
     "KelvinatorAuxiliaryHeatSelect", select.Select
 )
+KelvinatorSleepModeSelect = kelvinator_ir_ns.class_(
+    "KelvinatorSleepModeSelect", select.Select
+)
 
 CONF_AUXILIARY_HEAT = "auxiliary_heat"
+CONF_SLEEP_MODE = "sleep_mode"
+# select 的选项索引会直接转换成 C++ 枚举值，调整顺序时必须同步修改头文件枚举。
 AUXILIARY_HEAT_OPTIONS = ["关闭", "自动", "开启"]
+SLEEP_MODE_OPTIONS = ["关闭", "睡眠1", "睡眠2", "睡眠3", "睡眠4"]
 
 CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(KelvinatorIR).extend(
     {
@@ -30,11 +36,17 @@ CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(KelvinatorIR).extend(
             KelvinatorAuxiliaryHeatSelect,
             icon="mdi:radiator",
         ),
+        cv.Optional(CONF_SLEEP_MODE): select.select_schema(
+            KelvinatorSleepModeSelect,
+            icon="mdi:sleep",
+        ),
     }
 )
 
 
 async def to_code(config):
+    # 创建主 climate 实体，并按 YAML 中是否配置子实体来注册显示灯、电辅热和睡眠模式。
+    # 子实体构造时传入 var，C++ 端通过 parent 指针把操作汇总成一条完整空调命令。
     var = await climate_ir.new_climate_ir(config)
     cg.add(var.set_light(config[CONF_LIGHT]))
 
@@ -49,3 +61,11 @@ async def to_code(config):
             options=AUXILIARY_HEAT_OPTIONS,
         )
         cg.add(var.set_auxiliary_heat_select(auxiliary_heat))
+
+    if sleep_mode_config := config.get(CONF_SLEEP_MODE):
+        sleep_mode = await select.new_select(
+            sleep_mode_config,
+            var,
+            options=SLEEP_MODE_OPTIONS,
+        )
+        cg.add(var.set_sleep_mode_select(sleep_mode))

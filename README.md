@@ -4,7 +4,10 @@
 - 发送红外控制空调
 - 接收遥控器的红外信号，并同步状态
 - 支持灯光控制
-- 支持 "强劲" / "静音" 两个模式
+- 支持 "强劲" 模式
+- 支持 "静音" 模式
+- 支持 "E享" 模式
+- 支持 "睡眠1" / "睡眠2" / "睡眠3" / "睡眠4" 模式
 - 支持制热模式下控制电辅热
 
 ## 适用设备
@@ -72,6 +75,9 @@ climate:
       device_id: ${device_name}_ac_device
     auxiliary_heat:
       name: ${friendly_name}空调电辅热
+      device_id: ${device_name}_ac_device
+    sleep_mode:
+      name: ${friendly_name}空调睡眠模式
       device_id: ${device_name}_ac_device
 
 remote_transmitter:
