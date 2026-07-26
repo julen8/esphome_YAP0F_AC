@@ -20,8 +20,67 @@ static const uint8_t COMMAND_BLOCK_2_MARKER = 0x70;
 static const uint8_t SLEEP_CURVE_BLOCK_MARKER = 0x80;
 // E享标志位于第 15 字节低半字节；高半字节由校验函数在发送前覆盖。
 static const uint8_t ESHARE_MARKER = 0x03;
+// 左右风向由第 4 字节高半字节离散编码（实机抓包）：
+// 关闭=0x0, 扫风=0x1, 位置1=0x2, 位置2=0x3, 位置3=0x4, 位置4=0x5,
+// 位置5=0x6, 定向向两边=0xC, 交替扫风=0xD。
+static const uint8_t HORIZONTAL_CODE_OFF = 0x0;
+static const uint8_t HORIZONTAL_CODE_SWING = 0x1;
+static const uint8_t HORIZONTAL_CODE_POS_1 = 0x2;
+static const uint8_t HORIZONTAL_CODE_POS_2 = 0x3;
+static const uint8_t HORIZONTAL_CODE_POS_3 = 0x4;
+static const uint8_t HORIZONTAL_CODE_POS_4 = 0x5;
+static const uint8_t HORIZONTAL_CODE_POS_5 = 0x6;
+static const uint8_t HORIZONTAL_CODE_OUTWARD = 0xC;
+static const uint8_t HORIZONTAL_CODE_ALTERNATING = 0xD;
+static const uint8_t COOL_MODE_MARKER = 0x08;
 // 遥控器两块之间只有约 40ms，500ms 足以容纳正常抖动，同时避免跨命令配对。
 static const uint32_t SPLIT_BLOCK_TIMEOUT_MS = 500;
+
+static uint8_t encode_horizontal_direction(KelvinatorDirectionMode mode) {
+  switch (mode) {
+    case KELVINATOR_DIRECTION_SWING:
+      return HORIZONTAL_CODE_SWING;
+    case KELVINATOR_DIRECTION_POSITION_1:
+      return HORIZONTAL_CODE_POS_1;
+    case KELVINATOR_DIRECTION_POSITION_2:
+      return HORIZONTAL_CODE_POS_2;
+    case KELVINATOR_DIRECTION_POSITION_3:
+      return HORIZONTAL_CODE_POS_3;
+    case KELVINATOR_DIRECTION_POSITION_4:
+      return HORIZONTAL_CODE_POS_4;
+    case KELVINATOR_DIRECTION_POSITION_5:
+      return HORIZONTAL_CODE_POS_5;
+    case KELVINATOR_DIRECTION_OUTWARD:
+      return HORIZONTAL_CODE_OUTWARD;
+    case KELVINATOR_DIRECTION_ALTERNATING:
+      return HORIZONTAL_CODE_ALTERNATING;
+    default:
+      return HORIZONTAL_CODE_OFF;
+  }
+}
+
+static KelvinatorDirectionMode decode_horizontal_direction(uint8_t code) {
+  switch (code) {
+    case HORIZONTAL_CODE_SWING:
+      return KELVINATOR_DIRECTION_SWING;
+    case HORIZONTAL_CODE_POS_1:
+      return KELVINATOR_DIRECTION_POSITION_1;
+    case HORIZONTAL_CODE_POS_2:
+      return KELVINATOR_DIRECTION_POSITION_2;
+    case HORIZONTAL_CODE_POS_3:
+      return KELVINATOR_DIRECTION_POSITION_3;
+    case HORIZONTAL_CODE_POS_4:
+      return KELVINATOR_DIRECTION_POSITION_4;
+    case HORIZONTAL_CODE_POS_5:
+      return KELVINATOR_DIRECTION_POSITION_5;
+    case HORIZONTAL_CODE_OUTWARD:
+      return KELVINATOR_DIRECTION_OUTWARD;
+    case HORIZONTAL_CODE_ALTERNATING:
+      return KELVINATOR_DIRECTION_ALTERNATING;
+    default:
+      return KELVINATOR_DIRECTION_OFF;
+  }
+}
 
 void KelvinatorDisplaySwitch::write_state(bool state) { this->parent_->set_display_state(state); }
 
@@ -32,6 +91,16 @@ void KelvinatorAuxiliaryHeatSelect::control(size_t index) {
 void KelvinatorSleepModeSelect::control(size_t index) {
   this->parent_->set_sleep_mode(static_cast<KelvinatorSleepMode>(index));
 }
+
+void KelvinatorVerticalDirectionSelect::control(size_t index) {
+  this->parent_->set_vertical_direction_mode(static_cast<KelvinatorDirectionMode>(index));
+}
+
+void KelvinatorHorizontalDirectionSelect::control(size_t index) {
+  this->parent_->set_horizontal_direction_mode(static_cast<KelvinatorDirectionMode>(index));
+}
+
+void KelvinatorCoolModeSwitch::write_state(bool state) { this->parent_->set_cool_mode_state(state); }
 
 void KelvinatorIR::set_display_state(bool state) {
   // 显示灯是整条空调状态的一部分，不能只发送单独的开关码。
@@ -61,6 +130,48 @@ void KelvinatorIR::set_sleep_mode(KelvinatorSleepMode mode) {
   this->transmit_state();
   this->sleep_mode_select_->publish_state(static_cast<size_t>(mode));
   this->publish_state();
+}
+
+void KelvinatorIR::set_vertical_direction_mode(KelvinatorDirectionMode mode) {
+  this->vertical_direction_mode_ = mode;
+  if (mode != KELVINATOR_DIRECTION_OFF)
+    this->swing_mode = this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_OFF
+                           ? climate::CLIMATE_SWING_VERTICAL
+                           : climate::CLIMATE_SWING_BOTH;
+  else
+    this->swing_mode = this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_OFF
+                           ? climate::CLIMATE_SWING_OFF
+                           : climate::CLIMATE_SWING_HORIZONTAL;
+  this->transmit_state();
+  this->vertical_direction_select_->publish_state(static_cast<size_t>(mode));
+  this->publish_state();
+}
+
+void KelvinatorIR::set_horizontal_direction_mode(KelvinatorDirectionMode mode) {
+  this->horizontal_direction_mode_ = mode;
+  if (mode != KELVINATOR_DIRECTION_OFF)
+    this->swing_mode = this->vertical_direction_mode_ == KELVINATOR_DIRECTION_OFF
+                           ? climate::CLIMATE_SWING_HORIZONTAL
+                           : climate::CLIMATE_SWING_BOTH;
+  else
+    this->swing_mode = this->vertical_direction_mode_ == KELVINATOR_DIRECTION_OFF
+                           ? climate::CLIMATE_SWING_OFF
+                           : climate::CLIMATE_SWING_VERTICAL;
+  this->transmit_state();
+  this->horizontal_direction_select_->publish_state(static_cast<size_t>(mode));
+  this->publish_state();
+}
+
+void KelvinatorIR::set_cool_mode_state(bool state) {
+  if (state && this->mode != climate::CLIMATE_MODE_COOL) {
+    ESP_LOGW(TAG, "Cool mode can only be enabled in COOL mode");
+    this->cool_mode_ = false;
+    this->cool_mode_switch_->publish_state(false);
+    return;
+  }
+  this->cool_mode_ = state;
+  this->transmit_state();
+  this->cool_mode_switch_->publish_state(this->cool_mode_);
 }
 
 void KelvinatorIR::control(const climate::ClimateCall &call) {
@@ -94,6 +205,39 @@ void KelvinatorIR::control(const climate::ClimateCall &call) {
     // 普通状态下手动调风会退出静音/强劲；E享内调风是遥控器支持的例外。
     this->preset = climate::CLIMATE_PRESET_NONE;
     this->clear_custom_preset_();
+  }
+
+  if (call.get_swing_mode().has_value()) {
+    switch (*call.get_swing_mode()) {
+      case climate::CLIMATE_SWING_OFF:
+        this->vertical_direction_mode_ = KELVINATOR_DIRECTION_OFF;
+        this->horizontal_direction_mode_ = KELVINATOR_DIRECTION_OFF;
+        break;
+      case climate::CLIMATE_SWING_VERTICAL:
+        if (this->vertical_direction_mode_ == KELVINATOR_DIRECTION_OFF)
+          this->vertical_direction_mode_ = KELVINATOR_DIRECTION_SWING;
+        this->horizontal_direction_mode_ = KELVINATOR_DIRECTION_OFF;
+        break;
+      case climate::CLIMATE_SWING_HORIZONTAL:
+        this->vertical_direction_mode_ = KELVINATOR_DIRECTION_OFF;
+        if (this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_OFF)
+          this->horizontal_direction_mode_ = KELVINATOR_DIRECTION_SWING;
+        break;
+      case climate::CLIMATE_SWING_BOTH:
+        if (this->vertical_direction_mode_ == KELVINATOR_DIRECTION_OFF)
+          this->vertical_direction_mode_ = KELVINATOR_DIRECTION_SWING;
+        if (this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_OFF)
+          this->horizontal_direction_mode_ = KELVINATOR_DIRECTION_SWING;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (call.get_mode().has_value() && *call.get_mode() != climate::CLIMATE_MODE_COOL && this->cool_mode_) {
+    this->cool_mode_ = false;
+    if (this->cool_mode_switch_ != nullptr)
+      this->cool_mode_switch_->publish_state(false);
   }
   climate_ir::ClimateIR::control(call);
 }
@@ -149,16 +293,19 @@ void KelvinatorIR::transmit_state() {
     command.mode = MODE_AUTO;
     command.temperature = 9;
   }
-  command.swing_auto = this->swing_mode == climate::CLIMATE_SWING_VERTICAL ||
-                       this->swing_mode == climate::CLIMATE_SWING_BOTH;
-  command.swing_vertical = command.swing_auto ? 1 : 0;
-  command.swing_horizontal = this->swing_mode == climate::CLIMATE_SWING_HORIZONTAL ||
-                             this->swing_mode == climate::CLIMATE_SWING_BOTH;
+  command.swing_vertical = static_cast<uint8_t>(this->vertical_direction_mode_);
+  const uint8_t horizontal_code = encode_horizontal_direction(this->horizontal_direction_mode_);
+  command.raw8[4] = static_cast<uint8_t>((horizontal_code << 4) | (command.raw8[4] & 0x0F));
+  command.swing_auto = this->vertical_direction_mode_ == KELVINATOR_DIRECTION_SWING ||
+                       this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_SWING ||
+                       this->horizontal_direction_mode_ == KELVINATOR_DIRECTION_ALTERNATING;
   command.raw8[3] = COMMAND_BLOCK_1_MARKER;
   command.raw8[8] = command.raw8[0];
   command.raw8[9] = command.raw8[1];
   command.raw8[10] = command.raw8[2];
   command.raw8[11] = COMMAND_BLOCK_2_MARKER;
+  if (this->cool_mode_ && this->mode == climate::CLIMATE_MODE_COOL)
+    command.raw8[15] = (command.raw8[15] & 0xF0) | ((command.raw8[15] & 0x0F) | COOL_MODE_MARKER);
   // E享写入第 15 字节低半字节；高半字节是校验和，稍后由 apply_checksum() 生成。
   if (eshare)
     command.raw8[15] = (command.raw8[15] & 0xF0) | ESHARE_MARKER;
@@ -281,8 +428,15 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
       this->fan_mode = climate::CLIMATE_FAN_AUTO;
       break;
   }
-  const bool vertical_swing = command.swing_vertical == 1;
-  const bool horizontal_swing = command.swing_horizontal;
+  if (command.swing_vertical <= KELVINATOR_DIRECTION_POSITION_5)
+    this->vertical_direction_mode_ = static_cast<KelvinatorDirectionMode>(command.swing_vertical);
+  else
+    this->vertical_direction_mode_ = KELVINATOR_DIRECTION_SWING;
+
+  this->horizontal_direction_mode_ = decode_horizontal_direction(command.raw8[4] >> 4);
+
+  const bool vertical_swing = this->vertical_direction_mode_ != KELVINATOR_DIRECTION_OFF;
+  const bool horizontal_swing = this->horizontal_direction_mode_ != KELVINATOR_DIRECTION_OFF;
   if (vertical_swing && horizontal_swing)
     this->swing_mode = climate::CLIMATE_SWING_BOTH;
   else if (vertical_swing)
@@ -291,6 +445,11 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
     this->swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
   else
     this->swing_mode = climate::CLIMATE_SWING_OFF;
+
+  if (this->vertical_direction_select_ != nullptr)
+    this->vertical_direction_select_->publish_state(static_cast<size_t>(this->vertical_direction_mode_));
+  if (this->horizontal_direction_select_ != nullptr)
+    this->horizontal_direction_select_->publish_state(static_cast<size_t>(this->horizontal_direction_mode_));
 
   // E享使用第 15 字节低半字节的独立标志。睡眠档位由第 0 字节最高位与
   // 第 12 字节低位组合判断；睡眠和 quiet 可以同时存在，也可以只保留睡眠。
@@ -326,6 +485,10 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
   this->light_ = command.light;
   if (this->display_switch_ != nullptr)
     this->display_switch_->publish_state(this->light_);
+
+  this->cool_mode_ = command.power && command.mode == MODE_COOL && ((command.raw8[15] & COOL_MODE_MARKER) != 0);
+  if (this->cool_mode_switch_ != nullptr)
+    this->cool_mode_switch_->publish_state(this->cool_mode_);
 
   if (command.power && command.mode == MODE_HEAT) {
     // 电辅热只在开机且制热时具有明确语义；其他模式不覆盖 HA 中最后已知档位。

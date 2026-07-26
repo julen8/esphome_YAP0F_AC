@@ -17,12 +17,36 @@ KelvinatorAuxiliaryHeatSelect = kelvinator_ir_ns.class_(
 KelvinatorSleepModeSelect = kelvinator_ir_ns.class_(
     "KelvinatorSleepModeSelect", select.Select
 )
+KelvinatorVerticalDirectionSelect = kelvinator_ir_ns.class_(
+    "KelvinatorVerticalDirectionSelect", select.Select
+)
+KelvinatorHorizontalDirectionSelect = kelvinator_ir_ns.class_(
+    "KelvinatorHorizontalDirectionSelect", select.Select
+)
+KelvinatorCoolModeSwitch = kelvinator_ir_ns.class_(
+    "KelvinatorCoolModeSwitch", switch.Switch
+)
 
 CONF_AUXILIARY_HEAT = "auxiliary_heat"
 CONF_SLEEP_MODE = "sleep_mode"
+CONF_VERTICAL_DIRECTION = "vertical_direction"
+CONF_HORIZONTAL_DIRECTION = "horizontal_direction"
+CONF_COOL_MODE = "cool_mode"
 # select 的选项索引会直接转换成 C++ 枚举值，调整顺序时必须同步修改头文件枚举。
 AUXILIARY_HEAT_OPTIONS = ["关闭", "自动", "开启"]
 SLEEP_MODE_OPTIONS = ["关闭", "睡眠1", "睡眠2", "睡眠3", "睡眠4"]
+VERTICAL_DIRECTION_OPTIONS = ["关闭", "扫风", "位置1", "位置2", "位置3", "位置4", "位置5"]
+HORIZONTAL_DIRECTION_OPTIONS = [
+    "关闭",
+    "扫风",
+    "位置1",
+    "位置2",
+    "位置3",
+    "位置4",
+    "位置5",
+    "定向向两边",
+    "交替扫风",
+]
 
 CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(KelvinatorIR).extend(
     {
@@ -39,6 +63,19 @@ CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(KelvinatorIR).extend(
         cv.Optional(CONF_SLEEP_MODE): select.select_schema(
             KelvinatorSleepModeSelect,
             icon="mdi:sleep",
+        ),
+        cv.Optional(CONF_VERTICAL_DIRECTION): select.select_schema(
+            KelvinatorVerticalDirectionSelect,
+            icon="mdi:arrow-up-down",
+        ),
+        cv.Optional(CONF_HORIZONTAL_DIRECTION): select.select_schema(
+            KelvinatorHorizontalDirectionSelect,
+            icon="mdi:arrow-left-right",
+        ),
+        cv.Optional(CONF_COOL_MODE): switch.switch_schema(
+            KelvinatorCoolModeSwitch,
+            icon="mdi:snowflake-thermometer",
+            default_restore_mode="DISABLED",
         ),
     }
 )
@@ -69,3 +106,23 @@ async def to_code(config):
             options=SLEEP_MODE_OPTIONS,
         )
         cg.add(var.set_sleep_mode_select(sleep_mode))
+
+    if vertical_direction_config := config.get(CONF_VERTICAL_DIRECTION):
+        vertical_direction = await select.new_select(
+            vertical_direction_config,
+            var,
+            options=VERTICAL_DIRECTION_OPTIONS,
+        )
+        cg.add(var.set_vertical_direction_select(vertical_direction))
+
+    if horizontal_direction_config := config.get(CONF_HORIZONTAL_DIRECTION):
+        horizontal_direction = await select.new_select(
+            horizontal_direction_config,
+            var,
+            options=HORIZONTAL_DIRECTION_OPTIONS,
+        )
+        cg.add(var.set_horizontal_direction_select(horizontal_direction))
+
+    if cool_mode_config := config.get(CONF_COOL_MODE):
+        cool_mode = await switch.new_switch(cool_mode_config, var)
+        cg.add(var.set_cool_mode_switch(cool_mode))

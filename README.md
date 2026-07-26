@@ -8,6 +8,9 @@
 - 支持 "静音" 模式
 - 支持 "E享" 模式
 - 支持 "睡眠1" / "睡眠2" / "睡眠3" / "睡眠4" 模式
+- 支持上下5个风向控制
+- 支持左右7个风向控制
+- 支持制冷模式下凉爽功能开关
 - 支持制热模式下控制电辅热
 
 ## 适用设备
@@ -77,7 +80,19 @@ climate:
       name: ${friendly_name}空调电辅热
       device_id: ${device_name}_ac_device
     sleep_mode:
+      id: ${device_name}_sleep_mode
       name: ${friendly_name}空调睡眠模式
+      device_id: ${device_name}_ac_device
+    vertical_direction:
+      id: ${device_name}_vertical_direction
+      name: ${friendly_name}空调上下风向
+      device_id: ${device_name}_ac_device
+    horizontal_direction:
+      id: ${device_name}_horizontal_direction
+      name: ${friendly_name}空调左右风向
+      device_id: ${device_name}_ac_device
+    cool_mode:
+      name: ${friendly_name}空调凉爽模式
       device_id: ${device_name}_ac_device
 
 remote_transmitter:

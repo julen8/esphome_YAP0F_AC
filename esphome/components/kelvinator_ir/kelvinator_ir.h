@@ -34,7 +34,7 @@ union KelvinatorCommand {
     // 第 4 字节：上下扫风位置和左右扫风开关。
     uint8_t swing_vertical : 4;
     uint8_t swing_horizontal : 1;
-    uint8_t : 3;
+    uint8_t swing_horizontal_position : 3;
     // 第 5~6 字节：定时相关字段，当前功能不使用。
     uint8_t pad0[2];
     // 第 7 字节：低半字节含电辅热自动标志，高半字节为第一块校验和。
@@ -77,6 +77,18 @@ enum KelvinatorSleepMode : uint8_t {
   KELVINATOR_SLEEP_4 = 4,
 };
 
+enum KelvinatorDirectionMode : uint8_t {
+  KELVINATOR_DIRECTION_OFF = 0,
+  KELVINATOR_DIRECTION_SWING = 1,
+  KELVINATOR_DIRECTION_POSITION_1 = 2,
+  KELVINATOR_DIRECTION_POSITION_2 = 3,
+  KELVINATOR_DIRECTION_POSITION_3 = 4,
+  KELVINATOR_DIRECTION_POSITION_4 = 5,
+  KELVINATOR_DIRECTION_POSITION_5 = 6,
+  KELVINATOR_DIRECTION_OUTWARD = 7,
+  KELVINATOR_DIRECTION_ALTERNATING = 8,
+};
+
 class KelvinatorIR;
 
 // 将 HA 的显示灯 switch 操作转交给主空调组件统一构造并发送完整红外状态。
@@ -109,6 +121,33 @@ class KelvinatorSleepModeSelect : public select::Select {
   KelvinatorIR *parent_;
 };
 
+class KelvinatorVerticalDirectionSelect : public select::Select {
+ public:
+  explicit KelvinatorVerticalDirectionSelect(KelvinatorIR *parent) : parent_(parent) {}
+
+ protected:
+  void control(size_t index) override;
+  KelvinatorIR *parent_;
+};
+
+class KelvinatorHorizontalDirectionSelect : public select::Select {
+ public:
+  explicit KelvinatorHorizontalDirectionSelect(KelvinatorIR *parent) : parent_(parent) {}
+
+ protected:
+  void control(size_t index) override;
+  KelvinatorIR *parent_;
+};
+
+class KelvinatorCoolModeSwitch : public switch_::Switch {
+ public:
+  explicit KelvinatorCoolModeSwitch(KelvinatorIR *parent) : parent_(parent) {}
+
+ protected:
+  void write_state(bool state) override;
+  KelvinatorIR *parent_;
+};
+
 class KelvinatorIR : public climate_ir::ClimateIR {
  public:
   // 温度范围 16~30°C，步进 1°C；支持四档风速、四种扫风组合、无预设和强劲。
@@ -131,9 +170,21 @@ class KelvinatorIR : public climate_ir::ClimateIR {
   void set_sleep_mode_select(KelvinatorSleepModeSelect *sleep_mode_select) {
     this->sleep_mode_select_ = sleep_mode_select;
   }
+  void set_vertical_direction_select(KelvinatorVerticalDirectionSelect *vertical_direction_select) {
+    this->vertical_direction_select_ = vertical_direction_select;
+  }
+  void set_horizontal_direction_select(KelvinatorHorizontalDirectionSelect *horizontal_direction_select) {
+    this->horizontal_direction_select_ = horizontal_direction_select;
+  }
+  void set_cool_mode_switch(KelvinatorCoolModeSwitch *cool_mode_switch) {
+    this->cool_mode_switch_ = cool_mode_switch;
+  }
   void set_display_state(bool state);
   void set_auxiliary_heat_mode(KelvinatorAuxiliaryHeatMode mode);
   void set_sleep_mode(KelvinatorSleepMode mode);
+  void set_vertical_direction_mode(KelvinatorDirectionMode mode);
+  void set_horizontal_direction_mode(KelvinatorDirectionMode mode);
+  void set_cool_mode_state(bool state);
 
  protected:
   // 字符串必须与 HA 中显示的自定义预设名称完全一致。
@@ -145,11 +196,17 @@ class KelvinatorIR : public climate_ir::ClimateIR {
   bool on_receive(remote_base::RemoteReceiveData data) override;
 
   bool light_{true};
+  bool cool_mode_{false};
   KelvinatorAuxiliaryHeatMode auxiliary_heat_mode_{KELVINATOR_AUXILIARY_HEAT_AUTO};
   KelvinatorSleepMode sleep_mode_{KELVINATOR_SLEEP_OFF};
+  KelvinatorDirectionMode vertical_direction_mode_{KELVINATOR_DIRECTION_SWING};
+  KelvinatorDirectionMode horizontal_direction_mode_{KELVINATOR_DIRECTION_OFF};
   KelvinatorDisplaySwitch *display_switch_{nullptr};
   KelvinatorAuxiliaryHeatSelect *auxiliary_heat_select_{nullptr};
   KelvinatorSleepModeSelect *sleep_mode_select_{nullptr};
+  KelvinatorVerticalDirectionSelect *vertical_direction_select_{nullptr};
+  KelvinatorHorizontalDirectionSelect *horizontal_direction_select_{nullptr};
+  KelvinatorCoolModeSwitch *cool_mode_switch_{nullptr};
   // ESP32-C3 的 RMT 会把两个 8 字节数据块拆成两次回调，先暂存 0x50 块，
   // 收到对应的 0x70 块后再合并。时间戳用于阻止旧块与下一条命令错误配对。
   optional<uint64_t> pending_first_block_;
