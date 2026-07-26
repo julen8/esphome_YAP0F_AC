@@ -8,14 +8,14 @@ static const char *const TAG = "remote.kelvinator";
 
 // Kelvinator/YAP0F 协议以 85us 为基础时间单位。这里保留“单位数 × 85us”的
 // 写法，便于与协议资料和示波器/逻辑分析仪捕获结果直接对照。
-static const int32_t TICK_US = 85;
-static const int32_t HEADER_MARK_US = 106 * TICK_US;
-static const int32_t HEADER_SPACE_US = 53 * TICK_US;
-static const int32_t BIT_MARK_US = 8 * TICK_US;
-static const int32_t BIT_ONE_SPACE_US = 18 * TICK_US;
-static const int32_t BIT_ZERO_SPACE_US = 6 * TICK_US;
-static const int32_t GAP_SPACE_US = 235 * TICK_US;
-static const int32_t DOUBLE_GAP_SPACE_US = 2 * GAP_SPACE_US;
+static constexpr int32_t TICK_US = 85;
+static constexpr int32_t HEADER_MARK_US = 106 * TICK_US;
+static constexpr int32_t HEADER_SPACE_US = 53 * TICK_US;
+static constexpr int32_t BIT_MARK_US = 8 * TICK_US;
+static constexpr int32_t BIT_ONE_SPACE_US = 18 * TICK_US;
+static constexpr int32_t BIT_ZERO_SPACE_US = 6 * TICK_US;
+static constexpr int32_t GAP_SPACE_US = 235 * TICK_US;
+static constexpr int32_t DOUBLE_GAP_SPACE_US = 2 * GAP_SPACE_US;
 
 void KelvinatorProtocol::encode_data_(RemoteTransmitData *dst, const uint32_t data) {
   // 协议按低位优先发送：先发送低地址字节，每个字节再从 bit 0 发到 bit 7。

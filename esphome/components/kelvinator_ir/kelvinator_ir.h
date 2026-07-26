@@ -8,58 +8,6 @@
 namespace esphome {
 namespace kelvinator_ir {
 
-union KelvinatorCommand {
-  // 一条常规命令由两个 8 字节数据块组成，共 16 字节。三个成员共享同一段内存：
-  // raw64 用于整块收发，raw8 用于访问实测协议字节，位域用于读写已知功能。
-  uint64_t raw64[2];
-  uint8_t raw8[16];
-  struct {
-    // 第 0 字节：运行模式、电源、基础风速和自动扫风；最高位还被睡眠 1/3 使用。
-    uint8_t mode : 3;
-    uint8_t power : 1;
-    uint8_t basic_fan : 2;
-    uint8_t swing_auto : 1;
-    uint8_t : 1;
-    // 第 1 字节：目标温度减 16，例如 0x0A 表示 26°C。
-    uint8_t temperature : 4;
-    uint8_t : 4;
-    // 第 2 字节：强劲、显示灯、净化和电辅热关闭标志。
-    uint8_t : 4;
-    uint8_t turbo : 1;
-    uint8_t light : 1;
-    uint8_t ion_filter : 1;
-    uint8_t auxiliary_heat_off : 1;
-    // 第 3 字节：第一数据块命令标记，正常值固定为 0x50，按原始字节赋值。
-    uint8_t : 8;
-    // 第 4 字节：上下扫风位置和左右扫风开关。
-    uint8_t swing_vertical : 4;
-    uint8_t swing_horizontal : 1;
-    uint8_t swing_horizontal_position : 3;
-    // 第 5~6 字节：定时相关字段，当前功能不使用。
-    uint8_t pad0[2];
-    // 第 7 字节：低半字节含电辅热自动标志，高半字节为第一块校验和。
-    uint8_t : 3;
-    uint8_t auxiliary_heat_auto : 1;
-    uint8_t checksum1 : 4;
-    // 第 8~10 字节：重复第 0~2 字节，用于校验两段是否属于同一条命令。
-    uint8_t pad1[3];
-    // 第 11 字节：第二数据块命令标记，正常值固定为 0x70。
-    uint8_t : 8;
-    // 第 12 字节：第 7 位为静音；低位由睡眠 2/3/4 复用。
-    uint8_t : 7;
-    uint8_t quiet : 1;
-    // 第 13 字节：睡眠 3 参数，实测固定为 0xA9。
-    uint8_t : 8;
-    // 第 14 字节：高 3 位保存完整风速，低半字节还可能包含睡眠参数。
-    uint8_t : 4;
-    uint8_t fan : 3;
-    uint8_t : 1;
-    // 第 15 字节：低半字节为功能标志（E享为 0x3），高半字节为第二块校验和。
-    uint8_t : 4;
-    uint8_t checksum2 : 4;
-  };
-};
-
 // 枚举值必须与 climate.py 中电辅热 select 的选项索引保持一致。
 enum KelvinatorAuxiliaryHeatMode : uint8_t {
   KELVINATOR_AUXILIARY_HEAT_OFF = 0,

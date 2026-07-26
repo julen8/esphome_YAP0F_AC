@@ -76,23 +76,23 @@ climate:
     display:
       name: ${friendly_name}空调显示灯
       device_id: ${device_name}_ac_device
-    auxiliary_heat:
-      name: ${friendly_name}空调电辅热
-      device_id: ${device_name}_ac_device
-    sleep_mode:
-      id: ${device_name}_sleep_mode
-      name: ${friendly_name}空调睡眠模式
-      device_id: ${device_name}_ac_device
     vertical_direction:
       id: ${device_name}_vertical_direction
-      name: ${friendly_name}空调上下风向
+      name: ${friendly_name}空调上下风向 UD
       device_id: ${device_name}_ac_device
     horizontal_direction:
       id: ${device_name}_horizontal_direction
-      name: ${friendly_name}空调左右风向
+      name: ${friendly_name}空调左右风向 LR
+      device_id: ${device_name}_ac_device
+    auxiliary_heat:
+      name: ${friendly_name}空调电辅热
       device_id: ${device_name}_ac_device
     cool_mode:
       name: ${friendly_name}空调凉爽模式
+      device_id: ${device_name}_ac_device
+    sleep_mode:
+      id: ${device_name}_sleep_mode
+      name: ${friendly_name}空调睡眠模式 SLP
       device_id: ${device_name}_ac_device
 
 remote_transmitter:
