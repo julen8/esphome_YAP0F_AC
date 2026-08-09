@@ -12,6 +12,8 @@
 - 支持左右7个风向控制
 - 支持制冷模式下凉爽功能开关
 - 支持制热模式下控制电辅热
+- 支持制冷/除湿模式下干燥功能开关
+- 支持风速1至5模式
 
 ## 适用设备
 
@@ -74,25 +76,28 @@ climate:
     supports_heat: true
     light: true
     display:
-      name: ${friendly_name}空调显示灯
+      name: 指示灯
       device_id: ${device_name}_ac_device
     vertical_direction:
-      id: ${device_name}_vertical_direction
-      name: ${friendly_name}空调上下风向 UD
+      id: vertical_direction
+      name: 上下风向 UD
       device_id: ${device_name}_ac_device
     horizontal_direction:
       id: ${device_name}_horizontal_direction
-      name: ${friendly_name}空调左右风向 LR
+      name: 左右风向 LR
       device_id: ${device_name}_ac_device
     auxiliary_heat:
-      name: ${friendly_name}空调电辅热
+      name: 电辅热
       device_id: ${device_name}_ac_device
     cool_mode:
-      name: ${friendly_name}空调凉爽模式
+      name: 凉爽 COOL
+      device_id: ${device_name}_ac_device
+    dry_mode:
+      name: 干燥 DRY
       device_id: ${device_name}_ac_device
     sleep_mode:
       id: ${device_name}_sleep_mode
-      name: ${friendly_name}空调睡眠模式 SLP
+      name: 睡眠 SLP
       device_id: ${device_name}_ac_device
 
 remote_transmitter:

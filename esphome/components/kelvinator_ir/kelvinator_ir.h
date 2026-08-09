@@ -8,6 +8,10 @@
 namespace esphome {
 namespace kelvinator_ir {
 
+inline constexpr const char *KELVINATOR_FAN_SPEED_MODES[] = {"自动", "1档", "2档", "3档", "4档", "5档"};
+inline constexpr uint8_t KELVINATOR_FAN_SPEED_MODE_COUNT =
+  sizeof(KELVINATOR_FAN_SPEED_MODES) / sizeof(KELVINATOR_FAN_SPEED_MODES[0]);
+
 // 枚举值必须与 climate.py 中电辅热 select 的选项索引保持一致。
 enum KelvinatorAuxiliaryHeatMode : uint8_t {
   KELVINATOR_AUXILIARY_HEAT_OFF = 0,
@@ -96,17 +100,26 @@ class KelvinatorCoolModeSwitch : public switch_::Switch {
   KelvinatorIR *parent_;
 };
 
+class KelvinatorDryModeSwitch : public switch_::Switch {
+ public:
+  explicit KelvinatorDryModeSwitch(KelvinatorIR *parent) : parent_(parent) {}
+
+ protected:
+  void write_state(bool state) override;
+  KelvinatorIR *parent_;
+};
+
 class KelvinatorIR : public climate_ir::ClimateIR {
  public:
-  // 温度范围 16~30°C，步进 1°C；支持四档风速、四种扫风组合、无预设和强劲。
+  // 温度范围 16~30°C，步进 1°C；风速通过 climate 自定义模式暴露为自动和 1~5 档。
   // 静音与 E享通过自定义 preset 暴露，睡眠则由独立 select 暴露。
   KelvinatorIR()
       : climate_ir::ClimateIR(16, 30, 1.0f, true, true,
-                              {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
-                               climate::CLIMATE_FAN_HIGH},
+                              {},
                               {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_VERTICAL,
                                climate::CLIMATE_SWING_HORIZONTAL, climate::CLIMATE_SWING_BOTH},
                               {climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_BOOST}) {
+                  this->set_supported_custom_fan_modes(KELVINATOR_FAN_SPEED_MODES);
                   this->set_supported_custom_presets({QUIET_PRESET, ESHARE_PRESET});
   }
 
@@ -127,12 +140,16 @@ class KelvinatorIR : public climate_ir::ClimateIR {
   void set_cool_mode_switch(KelvinatorCoolModeSwitch *cool_mode_switch) {
     this->cool_mode_switch_ = cool_mode_switch;
   }
+  void set_dry_mode_switch(KelvinatorDryModeSwitch *dry_mode_switch) {
+    this->dry_mode_switch_ = dry_mode_switch;
+  }
   void set_display_state(bool state);
   void set_auxiliary_heat_mode(KelvinatorAuxiliaryHeatMode mode);
   void set_sleep_mode(KelvinatorSleepMode mode);
   void set_vertical_direction_mode(KelvinatorDirectionMode mode);
   void set_horizontal_direction_mode(KelvinatorDirectionMode mode);
   void set_cool_mode_state(bool state);
+  void set_dry_mode_state(bool state);
 
  protected:
   // 字符串必须与 HA 中显示的自定义预设名称完全一致。
@@ -145,7 +162,9 @@ class KelvinatorIR : public climate_ir::ClimateIR {
 
   bool light_{true};
   bool cool_mode_{false};
-  KelvinatorAuxiliaryHeatMode auxiliary_heat_mode_{KELVINATOR_AUXILIARY_HEAT_AUTO};
+  bool dry_mode_{false};
+  uint8_t fan_speed_{0};
+  KelvinatorAuxiliaryHeatMode auxiliary_heat_mode_{KELVINATOR_AUXILIARY_HEAT_OFF};
   KelvinatorSleepMode sleep_mode_{KELVINATOR_SLEEP_OFF};
   KelvinatorDirectionMode vertical_direction_mode_{KELVINATOR_DIRECTION_SWING};
   KelvinatorDirectionMode horizontal_direction_mode_{KELVINATOR_DIRECTION_OFF};
@@ -155,6 +174,7 @@ class KelvinatorIR : public climate_ir::ClimateIR {
   KelvinatorVerticalDirectionSelect *vertical_direction_select_{nullptr};
   KelvinatorHorizontalDirectionSelect *horizontal_direction_select_{nullptr};
   KelvinatorCoolModeSwitch *cool_mode_switch_{nullptr};
+  KelvinatorDryModeSwitch *dry_mode_switch_{nullptr};
   // ESP32-C3 的 RMT 会把两个 8 字节数据块拆成两次回调，先暂存 0x50 块，
   // 收到对应的 0x70 块后再合并。时间戳用于阻止旧块与下一条命令错误配对。
   optional<uint64_t> pending_first_block_;

@@ -63,7 +63,8 @@ static constexpr uint8_t MASK_TEMPERATURE = 0x0F;
 
 static constexpr uint8_t MASK_TURBO = 0x10;
 static constexpr uint8_t MASK_LIGHT = 0x20;
-static constexpr uint8_t MASK_AUXILIARY_HEAT_OFF = 0x80;
+// Byte2 bit7 在制冷/除湿时表示干燥（XFan），在制热时表示电辅热关闭。
+static constexpr uint8_t MASK_DRY_OR_AUXILIARY_HEAT_OFF = 0x80;
 
 static constexpr uint8_t MASK_SWING_VERTICAL = 0x0F;
 static constexpr uint8_t MASK_SWING_HORIZONTAL_CODE = 0xF0;
@@ -104,6 +105,7 @@ struct KelvinatorFrameState {
   KelvinatorDirectionMode horizontal_direction_mode{KELVINATOR_DIRECTION_OFF};
   bool eshare{false};
   bool cool_mode{false};
+  bool dry_mode{false};
   KelvinatorSleepMode sleep_mode{KELVINATOR_SLEEP_OFF};
 };
 
@@ -130,39 +132,15 @@ static inline uint8_t clamp_temperature(uint8_t temperature) {
   return temperature;
 }
 
-static inline uint8_t encode_basic_fan_mode(climate::ClimateFanMode fan_mode) {
-  switch (fan_mode) {
-    case climate::CLIMATE_FAN_LOW:
-      return 1;
-    case climate::CLIMATE_FAN_MEDIUM:
-      return 2;
-    case climate::CLIMATE_FAN_HIGH:
-      return 3;
-    default:
-      return 0;
-  }
-}
-
-static inline climate::ClimateFanMode decode_basic_fan_mode(uint8_t basic_fan) {
-  switch (basic_fan) {
-    case 1:
-      return climate::CLIMATE_FAN_LOW;
-    case 2:
-      return climate::CLIMATE_FAN_MEDIUM;
-    case 3:
-      return climate::CLIMATE_FAN_HIGH;
-    default:
-      return climate::CLIMATE_FAN_AUTO;
-  }
-}
-
 static std::array<uint8_t, 16> pack_regular_command(const KelvinatorFrameState &state) {
   std::array<uint8_t, 16> bytes{};
   const uint8_t clamped_temperature = clamp_temperature(state.temperature);
 
   write_bits(bytes[BYTE_0], MASK_MODE, SHIFT_MODE, state.mode);
   write_flag(bytes[BYTE_0], MASK_POWER, state.power);
-  write_bits(bytes[BYTE_0], MASK_BASIC_FAN, SHIFT_BASIC_FAN, state.basic_fan);
+  // Byte0 只有两位基础风速；Byte14 保存实际的 0~5 档位。
+  write_bits(bytes[BYTE_0], MASK_BASIC_FAN, SHIFT_BASIC_FAN,
+             std::min(state.basic_fan, static_cast<uint8_t>(3)));
   const bool swing_auto = state.vertical_direction_mode == KELVINATOR_DIRECTION_SWING ||
                           state.horizontal_direction_mode == KELVINATOR_DIRECTION_SWING ||
                           state.horizontal_direction_mode == KELVINATOR_DIRECTION_ALTERNATING;
@@ -173,7 +151,10 @@ static std::array<uint8_t, 16> pack_regular_command(const KelvinatorFrameState &
 
   write_flag(bytes[BYTE_2], MASK_TURBO, state.turbo);
   write_flag(bytes[BYTE_2], MASK_LIGHT, state.light);
-  write_flag(bytes[BYTE_2], MASK_AUXILIARY_HEAT_OFF, state.auxiliary_heat_mode == KELVINATOR_AUXILIARY_HEAT_OFF);
+  const bool dry_or_auxiliary_heat_off =
+      state.power && (((state.mode == MODE_COOL || state.mode == MODE_DRY) && state.dry_mode) ||
+                      (state.mode == MODE_HEAT && state.auxiliary_heat_mode == KELVINATOR_AUXILIARY_HEAT_OFF));
+  write_flag(bytes[BYTE_2], MASK_DRY_OR_AUXILIARY_HEAT_OFF, dry_or_auxiliary_heat_off);
 
   bytes[BYTE_3] = COMMAND_BLOCK_1_MARKER;
   write_bits(bytes[BYTE_4], MASK_SWING_VERTICAL, SHIFT_SWING_VERTICAL,
@@ -181,7 +162,9 @@ static std::array<uint8_t, 16> pack_regular_command(const KelvinatorFrameState &
   write_bits(bytes[BYTE_4], MASK_SWING_HORIZONTAL_CODE, SHIFT_SWING_HORIZONTAL_CODE,
              encode_horizontal_direction(state.horizontal_direction_mode));
 
-  write_flag(bytes[BYTE_7], MASK_AUXILIARY_HEAT_AUTO, state.auxiliary_heat_mode == KELVINATOR_AUXILIARY_HEAT_AUTO);
+  write_flag(bytes[BYTE_7], MASK_AUXILIARY_HEAT_AUTO,
+             state.power && state.mode == MODE_HEAT &&
+                 state.auxiliary_heat_mode == KELVINATOR_AUXILIARY_HEAT_AUTO);
 
   bytes[BYTE_8] = bytes[BYTE_0];
   bytes[BYTE_9] = bytes[BYTE_1];
@@ -190,7 +173,7 @@ static std::array<uint8_t, 16> pack_regular_command(const KelvinatorFrameState &
 
   write_flag(bytes[BYTE_12], MASK_QUIET, state.quiet);
 
-  // Byte14 的风速字段与 Byte0 的 basic_fan 保持一致。
+  // Byte14 保存完整 0~5 档风速，Byte0 只保存最高为 3 的基础风速摘要。
   write_bits(bytes[BYTE_14], MASK_FAN, SHIFT_FAN, state.basic_fan & 0x07);
 
   uint8_t feature_markers = 0;
@@ -232,15 +215,21 @@ static KelvinatorFrameState unpack_regular_command(const std::array<uint8_t, 16>
   state.temperature = static_cast<uint8_t>(read_bits(bytes[BYTE_1], MASK_TEMPERATURE, SHIFT_TEMPERATURE) + 16);
   state.turbo = read_flag(bytes[BYTE_2], MASK_TURBO);
   state.light = read_flag(bytes[BYTE_2], MASK_LIGHT);
+  state.dry_mode = state.power && (state.mode == MODE_COOL || state.mode == MODE_DRY) &&
+                   read_flag(bytes[BYTE_2], MASK_DRY_OR_AUXILIARY_HEAT_OFF);
 
-  if (read_flag(bytes[BYTE_2], MASK_AUXILIARY_HEAT_OFF))
+  if (state.power && state.mode == MODE_HEAT) {
+    if (read_flag(bytes[BYTE_2], MASK_DRY_OR_AUXILIARY_HEAT_OFF))
+      state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_OFF;
+    else if (read_flag(bytes[BYTE_7], MASK_AUXILIARY_HEAT_AUTO))
+      state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_AUTO;
+    else
+      state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_ON;
+  } else {
     state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_OFF;
-  else if (read_flag(bytes[BYTE_7], MASK_AUXILIARY_HEAT_AUTO))
-    state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_AUTO;
-  else
-    state.auxiliary_heat_mode = KELVINATOR_AUXILIARY_HEAT_ON;
+  }
 
-  state.basic_fan = read_bits(bytes[BYTE_0], MASK_BASIC_FAN, SHIFT_BASIC_FAN);
+  state.basic_fan = read_bits(bytes[BYTE_14], MASK_FAN, SHIFT_FAN);
 
   const uint8_t vertical = read_bits(bytes[BYTE_4], MASK_SWING_VERTICAL, SHIFT_SWING_VERTICAL);
   state.vertical_direction_mode =
@@ -337,6 +326,8 @@ void KelvinatorHorizontalDirectionSelect::control(size_t index) {
 
 void KelvinatorCoolModeSwitch::write_state(bool state) { this->parent_->set_cool_mode_state(state); }
 
+void KelvinatorDryModeSwitch::write_state(bool state) { this->parent_->set_dry_mode_state(state); }
+
 void KelvinatorIR::set_display_state(bool state) {
   // 显示灯是整条空调状态的一部分，不能只发送单独的开关码。
   this->light_ = state;
@@ -346,6 +337,13 @@ void KelvinatorIR::set_display_state(bool state) {
 }
 
 void KelvinatorIR::set_auxiliary_heat_mode(KelvinatorAuxiliaryHeatMode mode) {
+  if (this->mode != climate::CLIMATE_MODE_HEAT) {
+    ESP_LOGW(TAG, "Auxiliary heat can only be adjusted in HEAT mode");
+    this->auxiliary_heat_mode_ = KELVINATOR_AUXILIARY_HEAT_OFF;
+    if (this->auxiliary_heat_select_ != nullptr)
+      this->auxiliary_heat_select_->publish_state(static_cast<size_t>(this->auxiliary_heat_mode_));
+    return;
+  }
   // 电辅热由两个协议位组合表示：关闭位和自动位，具体映射在 transmit_state() 中完成。
   this->auxiliary_heat_mode_ = mode;
   this->transmit_state();
@@ -416,9 +414,34 @@ void KelvinatorIR::set_cool_mode_state(bool state) {
     this->cool_mode_switch_->publish_state(this->cool_mode_);
 }
 
+void KelvinatorIR::set_dry_mode_state(bool state) {
+  if (state && this->mode != climate::CLIMATE_MODE_COOL && this->mode != climate::CLIMATE_MODE_DRY) {
+    ESP_LOGW(TAG, "Dry mode can only be enabled in COOL or DRY mode");
+    this->dry_mode_ = false;
+    if (this->dry_mode_switch_ != nullptr)
+      this->dry_mode_switch_->publish_state(false);
+    return;
+  }
+  this->dry_mode_ = state;
+  this->transmit_state();
+  if (this->dry_mode_switch_ != nullptr)
+    this->dry_mode_switch_->publish_state(this->dry_mode_);
+}
+
 void KelvinatorIR::control(const climate::ClimateCall &call) {
   // ESPHome 会把一次 HA 操作包装成 ClimateCall。这里先维护预设间关系，
   // 再交给 ClimateIR 更新通用的模式、温度、风速并调用 transmit_state()。
+  if (call.has_custom_fan_mode()) {
+    const char *selected_fan_mode = call.get_custom_fan_mode().c_str();
+    for (uint8_t speed = 0; speed < KELVINATOR_FAN_SPEED_MODE_COUNT; speed++) {
+      if (std::strcmp(selected_fan_mode, KELVINATOR_FAN_SPEED_MODES[speed]) == 0) {
+        this->fan_speed_ = speed;
+        this->set_custom_fan_mode_(KELVINATOR_FAN_SPEED_MODES[speed]);
+        break;
+      }
+    }
+  }
+
   if (call.has_custom_preset()) {
     if (call.get_custom_preset() == ESHARE_PRESET) {
       // 遥控器进入 E享时会切到自动模式和 25°C，但进入后仍允许继续调整风速。
@@ -427,10 +450,13 @@ void KelvinatorIR::control(const climate::ClimateCall &call) {
       this->target_temperature = 25;
       this->sleep_mode_ = KELVINATOR_SLEEP_OFF;
       this->cool_mode_ = false;
+      this->dry_mode_ = false;
       if (this->sleep_mode_select_ != nullptr)
         this->sleep_mode_select_->publish_state(static_cast<size_t>(this->sleep_mode_));
       if (this->cool_mode_switch_ != nullptr)
         this->cool_mode_switch_->publish_state(false);
+      if (this->dry_mode_switch_ != nullptr)
+        this->dry_mode_switch_->publish_state(false);
     }
     this->set_custom_preset_(call.get_custom_preset());
   } else if (call.get_preset().has_value()) {
@@ -445,7 +471,7 @@ void KelvinatorIR::control(const climate::ClimateCall &call) {
              this->has_custom_preset() && this->get_custom_preset() == ESHARE_PRESET) {
     // E享只允许调整风速；修改模式或温度意味着回到普通控制，因此先清除 E享标志。
     this->clear_custom_preset_();
-  } else if (call.get_fan_mode().has_value() &&
+  } else if ((call.get_fan_mode().has_value() || call.has_custom_fan_mode()) &&
              !(this->has_custom_preset() && this->get_custom_preset() == ESHARE_PRESET)) {
     // 普通状态下手动调风会退出静音/强劲；E享内调风是遥控器支持的例外。
     this->preset = climate::CLIMATE_PRESET_NONE;
@@ -479,10 +505,23 @@ void KelvinatorIR::control(const climate::ClimateCall &call) {
     }
   }
 
-  if (call.get_mode().has_value() && *call.get_mode() != climate::CLIMATE_MODE_COOL && this->cool_mode_) {
+  if (call.get_mode().has_value() && *call.get_mode() != climate::CLIMATE_MODE_OFF &&
+      *call.get_mode() != climate::CLIMATE_MODE_COOL && this->cool_mode_) {
     this->cool_mode_ = false;
     if (this->cool_mode_switch_ != nullptr)
       this->cool_mode_switch_->publish_state(false);
+  }
+  if (call.get_mode().has_value() && *call.get_mode() != climate::CLIMATE_MODE_OFF &&
+      *call.get_mode() != climate::CLIMATE_MODE_COOL &&
+      *call.get_mode() != climate::CLIMATE_MODE_DRY && this->dry_mode_) {
+    this->dry_mode_ = false;
+    if (this->dry_mode_switch_ != nullptr)
+      this->dry_mode_switch_->publish_state(false);
+  }
+  if (call.get_mode().has_value() && *call.get_mode() != climate::CLIMATE_MODE_HEAT) {
+    this->auxiliary_heat_mode_ = KELVINATOR_AUXILIARY_HEAT_OFF;
+    if (this->auxiliary_heat_select_ != nullptr)
+      this->auxiliary_heat_select_->publish_state(static_cast<size_t>(this->auxiliary_heat_mode_));
   }
   climate_ir::ClimateIR::control(call);
 }
@@ -517,9 +556,8 @@ void KelvinatorIR::transmit_state() {
   state.quiet = quiet;
   state.light = this->light_;
   state.auxiliary_heat_mode = this->auxiliary_heat_mode_;
-  // 协议同时保存 basic_fan（Byte 0）和 fan（Byte 14），两者必须保持一致。
-  // 当前 HA 只暴露自动/低/中/高，对应协议值 0~3。
-  state.basic_fan = encode_basic_fan_mode(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
+  // Byte14 保存遥控器的自动和 1~5 档真实风速；Byte0 由打包函数写入兼容的基础档位。
+  state.basic_fan = this->fan_speed_;
   if (eshare) {
     // E享的标志虽然独立存在，但遥控器在进入时还会把模式和温度重置为自动、25°C。
     state.mode = MODE_AUTO;
@@ -529,6 +567,7 @@ void KelvinatorIR::transmit_state() {
   state.horizontal_direction_mode = this->horizontal_direction_mode_;
   state.eshare = eshare;
   state.cool_mode = this->cool_mode_;
+  state.dry_mode = this->dry_mode_;
   state.sleep_mode = this->sleep_mode_;
 
   // 使用显式掩码将语义状态打包为协议字节，避免依赖位域布局。
@@ -608,11 +647,12 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
     ESP_LOGW(TAG, "Discarding Kelvinator command with invalid block markers");
     return false;
   }
-  const uint8_t basic_fan_from_byte0 = read_bits(bytes[BYTE_0], MASK_BASIC_FAN, SHIFT_BASIC_FAN);
-  const uint8_t fan_from_byte14 = read_bits(bytes[BYTE_14], MASK_FAN, SHIFT_FAN);
-  if (basic_fan_from_byte0 != fan_from_byte14) {
-    ESP_LOGW(TAG, "Discarding Kelvinator command with mismatched fan bytes (B0=%u, B14=%u)", basic_fan_from_byte0,
-             fan_from_byte14);
+  const uint8_t basic_fan = read_bits(bytes[BYTE_0], MASK_BASIC_FAN, SHIFT_BASIC_FAN);
+  const uint8_t detailed_fan = read_bits(bytes[BYTE_14], MASK_FAN, SHIFT_FAN);
+  const uint8_t expected_basic_fan = std::min(detailed_fan, static_cast<uint8_t>(3));
+  if (basic_fan != expected_basic_fan) {
+    ESP_LOGW(TAG, "Discarding Kelvinator command with inconsistent fan fields (B0=%u, B14=%u)", basic_fan,
+             detailed_fan);
     return false;
   }
   const KelvinatorFrameState frame = unpack_regular_command(bytes);
@@ -638,8 +678,10 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
     }
   }
   this->target_temperature = clamp_temperature(frame.temperature);
-  // 接收时使用 basic_fan，与遥控器主显示和 Byte 0 的基础风速保持一致。
-  this->fan_mode = decode_basic_fan_mode(frame.basic_fan);
+  if (frame.basic_fan >= KELVINATOR_FAN_SPEED_MODE_COUNT)
+    ESP_LOGW(TAG, "Received reserved Kelvinator fan speed %u; treating it as speed 5", frame.basic_fan);
+  this->fan_speed_ = std::min(frame.basic_fan, static_cast<uint8_t>(5));
+  this->set_custom_fan_mode_(KELVINATOR_FAN_SPEED_MODES[this->fan_speed_]);
   this->vertical_direction_mode_ = frame.vertical_direction_mode;
   this->horizontal_direction_mode_ = frame.horizontal_direction_mode;
 
@@ -684,16 +726,21 @@ bool KelvinatorIR::on_receive(remote_base::RemoteReceiveData data) {
   if (this->display_switch_ != nullptr)
     this->display_switch_->publish_state(this->light_);
 
-  this->cool_mode_ = frame.cool_mode;
-  if (this->cool_mode_switch_ != nullptr)
-    this->cool_mode_switch_->publish_state(this->cool_mode_);
+  if (frame.power) {
+    // 关机帧不携带可靠的功能状态；保留最后一次开机时的凉爽和干燥设置。
+    this->cool_mode_ = frame.cool_mode;
+    if (this->cool_mode_switch_ != nullptr)
+      this->cool_mode_switch_->publish_state(this->cool_mode_);
 
-  if (frame.power && frame.mode == MODE_HEAT) {
-    // 电辅热只在开机且制热时具有明确语义；其他模式不覆盖 HA 中最后已知档位。
-    this->auxiliary_heat_mode_ = frame.auxiliary_heat_mode;
-    if (this->auxiliary_heat_select_ != nullptr)
-      this->auxiliary_heat_select_->publish_state(static_cast<size_t>(this->auxiliary_heat_mode_));
+    this->dry_mode_ = frame.dry_mode;
+    if (this->dry_mode_switch_ != nullptr)
+      this->dry_mode_switch_->publish_state(this->dry_mode_);
   }
+
+  // 电辅热只在开机且制热时具有语义；其他模式固定向 HA 发布为关闭。
+  this->auxiliary_heat_mode_ = frame.auxiliary_heat_mode;
+  if (this->auxiliary_heat_select_ != nullptr)
+    this->auxiliary_heat_select_->publish_state(static_cast<size_t>(this->auxiliary_heat_mode_));
   this->publish_state();
   return true;
 }
