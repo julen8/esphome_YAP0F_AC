@@ -36,8 +36,7 @@ esphome:
 esp32:
   board: esp32-c3-devkitm-1
   framework:
-    type: arduino
-    version: latest
+    type: esp-idf
 
 logger:
   level: DEBUG
