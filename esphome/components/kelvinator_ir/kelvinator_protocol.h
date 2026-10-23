@@ -19,9 +19,9 @@ class KelvinatorData {
 class KelvinatorProtocol : public RemoteProtocol<KelvinatorData> {
  public:
   // RemoteProtocol 接口：负责协议时序编码、单块解码和调试日志输出。
-  void encode(RemoteTransmitData *dst, const KelvinatorData &data) override;
-  optional<KelvinatorData> decode(RemoteReceiveData data) override;
-  void dump(const KelvinatorData &data) override;
+  void encode(RemoteTransmitData *dst, const KelvinatorData &data);
+  optional<KelvinatorData> decode(RemoteReceiveData data);
+  void dump(const KelvinatorData &data);
 
  private:
   // 一个协议块由两个 32 位区段组成，中间插入固定 footer。

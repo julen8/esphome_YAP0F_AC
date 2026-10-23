@@ -19,6 +19,10 @@
 
 esp32-c3实测
 
+## ESPHome 兼容性
+
+兼容 ESPHome 2026.10 的非虚函数 `RemoteProtocol` 接口，协议方法不使用 `override` 标记；红外收发逻辑及 YAML 配置无需更改。
+
 ## 示例配置
 
 ```yaml
