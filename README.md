@@ -36,6 +36,7 @@ esphome:
   devices:
     - id: ${device_name}_ac_device
       name: ${friendly_name}空调
+      relation: child
 
 esp32:
   board: esp32-c3-devkitm-1

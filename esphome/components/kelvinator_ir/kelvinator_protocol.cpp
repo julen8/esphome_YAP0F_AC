@@ -132,9 +132,10 @@ bool KelvinatorData::is_valid_checksum() {
 void KelvinatorProtocol::dump(const KelvinatorData &data) { data.log(); }
 
 void KelvinatorData::log() const {
+  char buffer[format_hex_pretty_size(sizeof(uint64_t))];
   for (size_t index = 0; index < this->data.size(); index++) {
     const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&this->data[index]);
-    ESP_LOGD(TAG, "Received Kelvinator block %u: %s", index, format_hex_pretty(bytes, sizeof(uint64_t)).c_str());
+    ESP_LOGD(TAG, "Received Kelvinator block %zu: %s", index, format_hex_pretty_to(buffer, bytes, sizeof(uint64_t), '.'));
   }
 }
 
